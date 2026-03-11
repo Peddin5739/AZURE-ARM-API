@@ -1,0 +1,358 @@
+{
+    "info": {
+        "name": "Azure ARM + ACP + APIM POC",
+        "description": "Complete API collection for managing APIs in Azure API Center (ACP) and Azure API Management (APIM) via ARM REST API.\n\nBase URL: http://localhost:3000\nAPIM Instance: ARMACPDEMO1\nAPI Center: ARM-ACP-POC\nResource Group: projectk_rg",
+        "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+    },
+    "variable": [
+        {
+            "key": "base_url",
+            "value": "http://localhost:3000",
+            "type": "string"
+        }
+    ],
+    "item": [
+        {
+            "name": "🔷 Azure API Management (APIM) — ARMACPDEMO1",
+            "item": [
+                {
+                    "name": "List All APIs",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "exec": [
+                                    "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                                    "pm.test('Has count', () => pm.expect(pm.response.json()).to.have.property('count'));"
+                                ]
+                            }
+                        }
+                    ],
+                    "request": {
+                        "method": "GET",
+                        "header": [],
+                        "url": {
+                            "raw": "{{base_url}}/api/apim/list",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "apim",
+                                "list"
+                            ]
+                        },
+                        "description": "Lists all APIs in APIM instance ARMACPDEMO1.\n\nExpected response:\n{\n  \"count\": 2,\n  \"apis\": [\n    { \"id\": \"carapi\", \"displayName\": \"carapi\", \"path\": \"/vehicles\" },\n    { \"id\": \"echo-api\", \"displayName\": \"Echo API\", \"path\": \"/echo\" }\n  ]\n}"
+                    }
+                },
+                {
+                    "name": "Onboard New API (no policy)",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "exec": [
+                                    "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                                    "pm.test('Onboarded', () => pm.expect(pm.response.json().message).to.include('onboarded'));"
+                                ]
+                            }
+                        }
+                    ],
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"apiId\": \"payments-api\",\n  \"displayName\": \"Payments API\",\n  \"path\": \"payments\",\n  \"backendUrl\": \"https://httpbin.org/anything\",\n  \"description\": \"Handles all payment flows\",\n  \"protocols\": [\"https\"]\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/api/apim/onboard",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "apim",
+                                "onboard"
+                            ]
+                        },
+                        "description": "Creates an API in APIM without a policy.\n\nRequired fields:\n  apiId        — unique ID (alphanumeric + hyphens)\n  displayName  — shown in APIM portal\n  path         — URL suffix, must be unique (e.g. 'payments')\n  backendUrl   — your actual backend service URL\n\nOptional:\n  description, protocols, policyXml"
+                    }
+                },
+                {
+                    "name": "Onboard API with Policy XML",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "exec": [
+                                    "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                                    "pm.test('Policy applied', () => pm.expect(pm.response.json().message).to.include('policy'));"
+                                ]
+                            }
+                        }
+                    ],
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"apiId\": \"orders-api\",\n  \"displayName\": \"Orders API\",\n  \"path\": \"orders\",\n  \"backendUrl\": \"https://httpbin.org/anything\",\n  \"description\": \"Order management service\",\n  \"protocols\": [\"https\"],\n  \"policyXml\": \"<policies>\\n  <inbound>\\n    <rate-limit calls=\\\"100\\\" renewal-period=\\\"60\\\" />\\n    <set-header name=\\\"X-Api-Source\\\" exists-action=\\\"override\\\">\\n      <value>APIM-Gateway</value>\\n    </set-header>\\n    <base />\\n  </inbound>\\n  <backend>\\n    <forward-request />\\n  </backend>\\n  <outbound>\\n    <set-header name=\\\"X-Powered-By\\\" exists-action=\\\"delete\\\" />\\n    <base />\\n  </outbound>\\n  <on-error>\\n    <base />\\n  </on-error>\\n</policies>\"\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/api/apim/onboard",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "apim",
+                                "onboard"
+                            ]
+                        },
+                        "description": "Creates an API in APIM AND immediately applies a policy XML.\n\nPolicy in this example:\n  ✅ Rate limit: 100 calls per 60 seconds\n  ✅ Inject header: X-Api-Source = APIM-Gateway\n  ✅ Remove X-Powered-By from response"
+                    }
+                },
+                {
+                    "name": "Set / Update Policy XML",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "exec": [
+                                    "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                                ]
+                            }
+                        }
+                    ],
+                    "request": {
+                        "method": "PUT",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"policyXml\": \"<policies>\\n  <inbound>\\n    <rate-limit calls=\\\"50\\\" renewal-period=\\\"60\\\" />\\n    <validate-jwt header-name=\\\"Authorization\\\" failed-validation-httpcode=\\\"401\\\" require-expiration-time=\\\"true\\\">\\n      <openid-config url=\\\"https://login.microsoftonline.com/YOUR_TENANT_ID/v2.0/.well-known/openid-configuration\\\" />\\n      <audiences>\\n        <audience>YOUR_CLIENT_ID</audience>\\n      </audiences>\\n    </validate-jwt>\\n    <base />\\n  </inbound>\\n  <backend>\\n    <forward-request />\\n  </backend>\\n  <outbound>\\n    <base />\\n  </outbound>\\n  <on-error>\\n    <base />\\n  </on-error>\\n</policies>\"\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/api/apim/payments-api/policy",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "apim",
+                                "payments-api",
+                                "policy"
+                            ]
+                        },
+                        "description": "Sets or updates the XML policy on an existing APIM API.\n\n⚠️ Change 'payments-api' in the URL to your target API ID.\n\nPolicy in this example:\n  ✅ Rate limit: 50 calls/60s\n  ✅ JWT validation against Azure AD (replace YOUR_TENANT_ID and YOUR_CLIENT_ID)"
+                    }
+                },
+                {
+                    "name": "Delete API",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "exec": [
+                                    "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                                    "pm.test('Deleted', () => pm.expect(pm.response.json().message).to.include('deleted'));"
+                                ]
+                            }
+                        }
+                    ],
+                    "request": {
+                        "method": "DELETE",
+                        "header": [],
+                        "url": {
+                            "raw": "{{base_url}}/api/apim/payments-api",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "apim",
+                                "payments-api"
+                            ]
+                        },
+                        "description": "Deletes an API from APIM.\n\n⚠️ Change 'payments-api' in the URL to the API ID you want to remove.\n\nExisting APIs in ARMACPDEMO1:\n  - carapi\n  - echo-api"
+                    }
+                }
+            ]
+        },
+        {
+            "name": "🔶 Azure API Center (ACP) — ARM-ACP-POC",
+            "item": [
+                {
+                    "name": "List All APIs",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "exec": [
+                                    "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                                    "pm.test('Has count', () => pm.expect(pm.response.json()).to.have.property('count'));"
+                                ]
+                            }
+                        }
+                    ],
+                    "request": {
+                        "method": "GET",
+                        "header": [],
+                        "url": {
+                            "raw": "{{base_url}}/api/apicenter/list",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "apicenter",
+                                "list"
+                            ]
+                        },
+                        "description": "Lists all APIs in Azure API Center (ARM-ACP-POC).\nNote: API Center is a catalog/registry — it does NOT proxy traffic."
+                    }
+                },
+                {
+                    "name": "Onboard New API",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "exec": [
+                                    "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                                ]
+                            }
+                        }
+                    ],
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"apiId\": \"payments-api\",\n  \"title\": \"Payments API\",\n  \"description\": \"Handles all payment flows\",\n  \"kind\": \"rest\",\n  \"lifecycleStage\": \"development\"\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/api/apicenter/onboard",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "apicenter",
+                                "onboard"
+                            ]
+                        },
+                        "description": "Registers an API in Azure API Center catalog.\n\nkind options: rest | graphql | grpc | soap | webhook | websocket\nlifecycleStage options: design | development | testing | preview | production"
+                    }
+                },
+                {
+                    "name": "Delete API",
+                    "request": {
+                        "method": "DELETE",
+                        "header": [],
+                        "url": {
+                            "raw": "{{base_url}}/api/apicenter/payments-api",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "apicenter",
+                                "payments-api"
+                            ]
+                        },
+                        "description": "Deletes an API from the API Center catalog.\n⚠️ Change 'payments-api' in the URL to the target API ID."
+                    }
+                }
+            ]
+        },
+        {
+            "name": "👤 Azure AD (Graph API)",
+            "item": [
+                {
+                    "name": "Get User Details",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "exec": [
+                                    "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                                    "pm.test('Has user object', () => pm.expect(pm.response.json()).to.have.property('user'));"
+                                ]
+                            }
+                        }
+                    ],
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"email\": \"user@yourdomain.com\"\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/api/user-details",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "user-details"
+                            ]
+                        },
+                        "description": "Fetches:\n  - User profile (name, job title, department)\n  - Azure AD group memberships\n  - App role assignments"
+                    }
+                }
+            ]
+        }
+    ]
+}
