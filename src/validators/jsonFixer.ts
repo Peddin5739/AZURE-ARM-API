@@ -2,41 +2,78 @@
  * src/validators/jsonFixer.ts
  * ─────────────────────────────────────────────────────────────────────────────
  * Fixes common JSON issues when a frontend sends multi-line content
- * (YAML swagger specs, XML policy) inside a JSON body.
+ * (YAML swagger specs, XML policy with embedded C# / attributes) in a JSON body.
  *
- * Two problems solved:
- *  1. Literal newlines/tabs inside JSON strings → escaped (\n, \t)
- *  2. Embedded double quotes inside YAML values (e.g. example: "value")
- *     → detected via look-ahead heuristic and escaped as \"
+ * Problems solved:
+ *  1. Literal newlines/tabs inside JSON strings  → escaped (\n, \t)
+ *  2. Embedded double-quotes in YAML/XML string values
+ *     (e.g. XML attributes: allow-credentials="false"
+ *           YAML examples:  example: "Buy groceries"
+ *           C# code:        new JProperty("error", context.LastError.Message))
+ *     → detected via two-level look-ahead heuristic and escaped as \"
  *
- * Heuristic for embedded quotes:
- *   A `"` inside a JSON string is a legitimate string-terminator ONLY if
- *   the next non-whitespace character in the RAW source is one of: , } ]
- *   Any other following character means the `"` is embedded and gets escaped.
+ * Heuristic — a `"` inside a string is a TERMINATOR only when:
+ *   • next non-ws char is }  or ]  → end of JSON object/array
+ *   • next non-ws char is :        → end of a JSON key
+ *   • next non-ws char is ,  AND the char after that (skipping ws) is " → real JSON separator
+ *   • end of input (null)
+ *
+ * In all other cases the `"` is treated as an embedded quote and escaped.
+ *
+ * This correctly handles:
+ *   "error", context.LastError.Message   → next after , is 'c'  → embedded ✅
+ *   "value",                             → next after , is '"'  → terminator ✅
+ *   allow-credentials="false">          → next after " is '>'  → embedded ✅
+ *   example: "Buy groceries"            → next after " is '\n' then 'c' → embedded ✅
  */
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 /**
- * Returns the next non-whitespace character at or after `pos` in `raw`.
- * Returns null if only whitespace/end remains.
+ * Returns [char | null, position] of the next non-whitespace char at or after pos.
  */
-function peekNextMeaningful(raw: string, pos: number): string | null {
+function peekNext(raw: string, pos: number): [string | null, number] {
     for (let i = pos; i < raw.length; i++) {
         const c = raw[i];
         if (c !== ' ' && c !== '\t' && c !== '\n' && c !== '\r') {
-            return c;
+            return [c, i];
         }
     }
-    return null;
+    return [null, raw.length];
 }
 
 /**
- * State-machine walker that:
- *  - Tracks whether we are inside a JSON string
- *  - Replaces literal newlines/tabs/CR with their escaped equivalents
- *  - Applies the look-ahead heuristic to decide whether a `"` inside a string
- *    is a terminator or an embedded quote that should be escaped
+ * Decides if the `"` at position `i` (inside a string) is a JSON string
+ * terminator or an embedded quote that should be escaped.
+ */
+function isStringTerminator(raw: string, i: number): boolean {
+    const [next, nextPos] = peekNext(raw, i + 1);
+
+    // Definitely a terminator: end of JSON value in object/array/key
+    if (next === '}' || next === ']' || next === ':' || next === null) {
+        return true;
+    }
+
+    // Comma — could be JSON separator OR embedded (e.g. in C# method args)
+    if (next === ',') {
+        const [afterComma] = peekNext(raw, nextPos + 1);
+        // It's a JSON separator only if the next token after the comma
+        // starts a new JSON value (a `"` for a key or string) or closes structure
+        return afterComma === '"' || afterComma === '}' || afterComma === ']' || afterComma === null;
+    }
+
+    // Anything else (letters, digits, >, /, etc.) → embedded quote
+    return false;
+}
+
+// ─── Main fixer ───────────────────────────────────────────────────────────────
+
+/**
+ * Single-pass character walker:
+ *  - Tracks string-open/close state
+ *  - Escapes literal newlines/tabs inside strings
+ *  - Uses isStringTerminator() to decide whether a `"` ends the string
+ *    or should be escaped as \"
  */
 export function fixRawJson(raw: string): string {
     const out: string[] = [];
@@ -46,7 +83,6 @@ export function fixRawJson(raw: string): string {
     for (let i = 0; i < raw.length; i++) {
         const ch = raw[i];
 
-        // ── Handle escape sequences ────────────────────────────────────────────
         if (escaped) {
             out.push(ch);
             escaped = false;
@@ -59,37 +95,25 @@ export function fixRawJson(raw: string): string {
             continue;
         }
 
-        // ── Handle double-quote ────────────────────────────────────────────────
         if (ch === '"') {
             if (!inString) {
-                // Opening a string — always accepted
                 inString = true;
                 out.push(ch);
+            } else if (isStringTerminator(raw, i)) {
+                inString = false;
+                out.push(ch);
             } else {
-                // Inside a string: is this a terminator or an embedded quote?
-                const next = peekNextMeaningful(raw, i + 1);
-
-                // Valid JSON string terminators: , } ] : (key separator) or end of input
-                const isTerminator = next === ',' || next === '}' || next === ']' || next === ':' || next === null;
-
-                if (isTerminator) {
-                    // Legitimate end of this string value
-                    inString = false;
-                    out.push(ch);
-                } else {
-                    // Embedded quote inside YAML/XML — escape it
-                    out.push('\\"');
-                }
+                // Embedded quote — escape it
+                out.push('\\"');
             }
             continue;
         }
 
-        // ── Inside a string: escape literal control chars ──────────────────────
         if (inString) {
             if (ch === '\n') { out.push('\\n'); continue; }
             if (ch === '\r') { out.push('\\r'); continue; }
             if (ch === '\t') { out.push('\\t'); continue; }
-            if (ch === '\0') { continue; }          // drop NUL bytes
+            if (ch === '\0') { continue; }
         }
 
         out.push(ch);
@@ -98,27 +122,23 @@ export function fixRawJson(raw: string): string {
     return out.join('');
 }
 
-// ─── Main Export ──────────────────────────────────────────────────────────────
+// ─── Public API ───────────────────────────────────────────────────────────────
 
 /**
- * Attempts to parse raw text as JSON.
- * Pass 1: standard JSON.parse
- * Pass 2: apply fixRawJson() (escape embedded newlines + embedded quotes) and retry
- * Throws if still invalid after fixing.
+ * Try to parse `raw` as JSON.
+ * Pass 1: standard JSON.parse (fast path — valid bodies skip the fixer)
+ * Pass 2: apply fixRawJson() and retry
+ * Throws descriptive error if still invalid.
  */
 export function parseJsonLenient(raw: string): unknown {
-    // Fast path: valid JSON as-is
     try {
         return JSON.parse(raw);
-    } catch {
-        /* fall through to fix */
-    }
+    } catch { /* fall through */ }
 
-    // Slow path: fix and retry
     const fixed = fixRawJson(raw);
     try {
         return JSON.parse(fixed);
-    } catch (err2) {
-        throw new Error(`Invalid JSON body (even after auto-fix): ${(err2 as Error).message}`);
+    } catch (err) {
+        throw new Error(`Invalid JSON body (even after auto-fix): ${(err as Error).message}`);
     }
 }
