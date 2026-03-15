@@ -1,0 +1,228 @@
+{
+    "info": {
+        "name": "Azure ARM API — Fastify",
+        "_postman_id": "azure-arm-api-fastify-v2",
+        "description": "Azure APIM & API Center onboarding via ARM REST API (Fastify + TypeScript)",
+        "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+    },
+    "variable": [
+        {
+            "key": "baseUrl",
+            "value": "http://localhost:3000",
+            "type": "string"
+        }
+    ],
+    "item": [
+        {
+            "name": "APIM",
+            "item": [
+                {
+                    "name": "Full Onboard (6 steps)",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/api/apim/onboard-full",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "api",
+                                "apim",
+                                "onboard-full"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            },
+                            "raw": "{\n  \"apiId\": \"payments-api\",\n  \"displayName\": \"Payments API\",\n  \"path\": \"payments\",\n  \"backendUrl\": \"https://httpbin.org\",\n  \"description\": \"Payment processing API\",\n  \"protocols\": [\"https\"],\n  \"subscriptionRequired\": true,\n  \"namedValues\": [\n    { \"name\": \"backend-url\", \"value\": \"https://httpbin.org\", \"isSecret\": false },\n    { \"name\": \"api-key\", \"value\": \"mysecretkey123\", \"isSecret\": true }\n  ],\n  \"swagger\": \"openapi: 3.0.0\\ninfo:\\n  title: Payments API\\n  version: 1.0.0\\npaths:\\n  /pay:\\n    post:\\n      operationId: makePayment\\n      summary: Make a payment\\n      responses:\\n        '200':\\n          description: Success\",\n  \"apiPolicy\": \"<policies><inbound><rate-limit calls=\\\"100\\\" renewal-period=\\\"60\\\" /><base /></inbound><backend><forward-request /></backend><outbound><base /></outbound><on-error><base /></on-error></policies>\",\n  \"product\": {\n    \"productId\": \"payments-product\",\n    \"displayName\": \"Payments Product\",\n    \"description\": \"Access to Payment APIs\",\n    \"subscriptionRequired\": true,\n    \"state\": \"published\",\n    \"policy\": \"<policies><inbound><base /></inbound><backend><forward-request /></backend><outbound><base /></outbound><on-error><base /></on-error></policies>\"\n  },\n  \"subscription\": {\n    \"subscriptionId\": \"sub-payments-api\",\n    \"displayName\": \"Default Subscription\"\n  }\n}"
+                        }
+                    }
+                },
+                {
+                    "name": "List APIs",
+                    "request": {
+                        "method": "GET",
+                        "url": {
+                            "raw": "{{baseUrl}}/api/apim/list",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "api",
+                                "apim",
+                                "list"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "Set API Policy",
+                    "request": {
+                        "method": "PUT",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/api/apim/payments-api/policy",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "api",
+                                "apim",
+                                "payments-api",
+                                "policy"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            },
+                            "raw": "{\n  \"policyXml\": \"<policies><inbound><rate-limit calls=\\\"100\\\" renewal-period=\\\"60\\\" /><base /></inbound><backend><forward-request /></backend><outbound><base /></outbound><on-error><base /></on-error></policies>\"\n}"
+                        }
+                    }
+                },
+                {
+                    "name": "Delete API",
+                    "request": {
+                        "method": "DELETE",
+                        "url": {
+                            "raw": "{{baseUrl}}/api/apim/payments-api",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "api",
+                                "apim",
+                                "payments-api"
+                            ]
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            "name": "API Center",
+            "item": [
+                {
+                    "name": "List APIs",
+                    "request": {
+                        "method": "GET",
+                        "url": {
+                            "raw": "{{baseUrl}}/api/apicenter/list",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "api",
+                                "apicenter",
+                                "list"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "Onboard API",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/api/apicenter/onboard",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "api",
+                                "apicenter",
+                                "onboard"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            },
+                            "raw": "{\n  \"apiId\": \"payments-api\",\n  \"title\": \"Payments API\",\n  \"description\": \"Payment processing API\",\n  \"kind\": \"rest\",\n  \"lifecycleStage\": \"development\"\n}"
+                        }
+                    }
+                },
+                {
+                    "name": "Delete API",
+                    "request": {
+                        "method": "DELETE",
+                        "url": {
+                            "raw": "{{baseUrl}}/api/apicenter/payments-api",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "api",
+                                "apicenter",
+                                "payments-api"
+                            ]
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            "name": "Azure AD",
+            "item": [
+                {
+                    "name": "Get User Details",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/api/user-details",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "api",
+                                "user-details"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            },
+                            "raw": "{\n  \"email\": \"user@yourdomain.com\"\n}"
+                        }
+                    }
+                }
+            ]
+        }
+    ]
+}
