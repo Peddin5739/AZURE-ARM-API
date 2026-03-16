@@ -50,13 +50,25 @@ async function parseResponse(res: Response): Promise<unknown> {
 
 function assertOk(data: unknown, res: Response, label: string): void {
     if (!res.ok) {
-        const msg =
-            typeof data === 'object' && data !== null
-                ? ((data as Record<string, unknown>)?.error as Record<string, unknown>)?.message as string ?? JSON.stringify(data)
-                : String(data);
+        let msg = String(data);
+        if (typeof data === 'object' && data !== null) {
+            const errObj = (data as Record<string, unknown>)?.error as Record<string, unknown> | undefined;
+            if (errObj) {
+                msg = (errObj.message as string) ?? JSON.stringify(data);
+                // Pull in ARM nested detail messages
+                const details = errObj.details as Array<Record<string, unknown>> | undefined;
+                if (Array.isArray(details) && details.length > 0) {
+                    const detailMsgs = details.map(d => d.message).filter(Boolean).join(' | ');
+                    if (detailMsgs) msg += ` (Details: ${detailMsgs})`;
+                }
+            } else {
+                msg = JSON.stringify(data);
+            }
+        }
         throw new Error(`${label} failed [${res.status}]: ${msg}`);
     }
 }
+
 
 // ─── 1. Named Value ───────────────────────────────────────────────────────────
 
@@ -104,7 +116,7 @@ export async function createOrUpdateBackend(
     const body = {
         properties: {
             url: params.url,
-            protocol: params.protocol ?? 'https',
+            protocol: params.protocol ?? 'http',  // ARM accepts 'http' or 'soap' — HTTPS is inferred from the URL
             title: params.title ?? params.backendId,
             description: params.description ?? '',
         },
@@ -342,9 +354,69 @@ export async function deleteApi(ctx: ApimContext, apiId: string): Promise<void> 
     });
 
     if (res.status === 204 || res.status === 200) return;
-    if (res.status === 404) throw new Error(`API '${apiId}' not found in APIM.`);
+    if (res.status === 404) return; // already gone — safe for rollback
     const data = await parseResponse(res);
-    throw new Error(
-        `Delete API failed [${res.status}]: ${JSON.stringify(data)}`
+    throw new Error(`Delete API failed [${res.status}]: ${JSON.stringify(data)}`);
+}
+
+// ─── Saga Rollback Helpers ────────────────────────────────────────────────────
+// Each function is a compensating transaction used when a later step fails.
+// All silently ignore 404 (resource already absent) and catch errors to ensure
+// the entire rollback stack completes even if one delete fails.
+
+async function safeDelete(url: string, token: string, label: string): Promise<void> {
+    try {
+        const res = await fetch(url, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${token}`, 'If-Match': '*' },
+        });
+        if (res.status === 404 || res.status === 204 || res.status === 200) return;
+        const data = await parseResponse(res);
+        console.warn(`[Rollback] ${label} → [${res.status}]: ${JSON.stringify(data)}`);
+    } catch (err) {
+        console.warn(`[Rollback] ${label} → ${(err as Error).message}`);
+    }
+}
+
+export async function rollbackNamedValue(ctx: ApimContext, namedValueId: string): Promise<void> {
+    const token = await getArmToken(ctx);
+    await safeDelete(
+        `${serviceBase(ctx)}/namedValues/${namedValueId}${qv()}`,
+        token, `NamedValue "${namedValueId}"`,
     );
 }
+
+export async function rollbackBackend(ctx: ApimContext, backendId: string): Promise<void> {
+    const token = await getArmToken(ctx);
+    await safeDelete(
+        `${serviceBase(ctx)}/backends/${backendId}${qv()}`,
+        token, `Backend "${backendId}"`,
+    );
+}
+
+export async function rollbackProduct(ctx: ApimContext, productId: string): Promise<void> {
+    const token = await getArmToken(ctx);
+    await safeDelete(
+        `${serviceBase(ctx)}/products/${productId}${qv('&deleteSubscriptions=true')}`,
+        token, `Product "${productId}"`,
+    );
+}
+
+export async function rollbackSubscription(ctx: ApimContext, subscriptionId: string): Promise<void> {
+    const token = await getArmToken(ctx);
+    await safeDelete(
+        `${serviceBase(ctx)}/subscriptions/${subscriptionId}${qv()}`,
+        token, `Subscription "${subscriptionId}"`,
+    );
+}
+
+export async function rollbackApiProductAssociation(
+    ctx: ApimContext, productId: string, apiId: string,
+): Promise<void> {
+    const token = await getArmToken(ctx);
+    await safeDelete(
+        `${serviceBase(ctx)}/products/${productId}/apis/${apiId}${qv()}`,
+        token, `Association "${productId}↔${apiId}"`,
+    );
+}
+

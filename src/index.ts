@@ -9,6 +9,7 @@
  * All other individual endpoints are also preserved.
  */
 
+import './telemetry';
 import 'isomorphic-fetch';
 import * as dotenv from 'dotenv';
 dotenv.config({ override: true });
@@ -104,7 +105,13 @@ server.addContentTypeParser('text/plain', { parseAs: 'string' }, (_req, body, do
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  POST /api/apim/onboard-full
-//  Single call that runs all 6 APIM provisioning steps in sequence.
+//  Saga orchestrator: 6 APIM steps with automatic rollback on any failure.
+//
+//  Design:
+//   - Each successful step pushes a compensating function onto `compensations[]`
+//   - If any step throws, `runRollback()` drains the stack in LIFO order
+//   - 200  → all steps succeeded
+//   - 409  → a step failed; rollback was executed; response shows which step failed
 // ─────────────────────────────────────────────────────────────────────────────
 
 server.post<{ Body: OnboardFullRequest }>('/api/apim/onboard-full', async (req, reply) => {
@@ -121,6 +128,21 @@ server.post<{ Body: OnboardFullRequest }>('/api/apim/onboard-full', async (req, 
     }
     if (!/^[a-zA-Z0-9-]+$/.test(body.apiId)) {
         return reply.status(400).send({ error: '"apiId" must contain only alphanumeric characters and hyphens.' });
+    }
+
+    // ── Saga state ─────────────────────────────────────────────────────────────
+    const compensations: Array<() => Promise<void>> = [];
+
+    async function runRollback(): Promise<void> {
+        req.log.warn(`[Saga] Rolling back ${compensations.length} completed step(s) in reverse order…`);
+        for (const compensate of compensations.reverse()) {
+            try {
+                await compensate();
+            } catch (err) {
+                req.log.warn(`[Saga] Rollback step error (non-fatal): ${(err as Error).message}`);
+            }
+        }
+        req.log.warn('[Saga] Rollback complete.');
     }
 
     const result: OnboardFullResult = {
@@ -152,9 +174,14 @@ server.post<{ Body: OnboardFullRequest }>('/api/apim/onboard-full', async (req, 
                     tags: nv.tags ?? [],
                 });
                 step.success = true;
+                compensations.push(() => apim.rollbackNamedValue(ctx, nv.name));
             } catch (err) {
                 step.error = (err as Error).message;
+                result.steps.namedValues.push(step);
                 result.success = false;
+                result.rolledBack = true;
+                await runRollback();
+                return reply.status(409).send(result);
             }
             result.steps.namedValues.push(step);
         }
@@ -162,20 +189,26 @@ server.post<{ Body: OnboardFullRequest }>('/api/apim/onboard-full', async (req, 
 
     // ── Step 2: Backend ─────────────────────────────────────────────────────────
     {
+        const backendId = `${body.apiId}-backend`;
         const step: StepResult = { success: false };
         try {
-            req.log.info(`[2] Creating backend: ${body.apiId}-backend`);
+            req.log.info(`[2] Creating backend: ${backendId}`);
             step.data = await apim.createOrUpdateBackend(ctx, {
-                backendId: `${body.apiId}-backend`,
+                backendId,
                 url: body.backendUrl,
                 title: `${body.displayName} Backend`,
-                protocol: 'https',
+                protocol: 'http',
                 description: body.description ?? '',
             });
             step.success = true;
+            compensations.push(() => apim.rollbackBackend(ctx, backendId));
         } catch (err) {
             step.error = (err as Error).message;
+            result.steps.backend = step;
             result.success = false;
+            result.rolledBack = true;
+            await runRollback();
+            return reply.status(409).send(result);
         }
         result.steps.backend = step;
     }
@@ -197,8 +230,9 @@ server.post<{ Body: OnboardFullRequest }>('/api/apim/onboard-full', async (req, 
                 step.error = `Swagger parse error: ${(fixErr as Error).message}`;
                 result.steps.api = { ...step, success: false };
                 result.success = false;
-                // Skip subsequent steps that depend on the API
-                return reply.status(207).send(result);
+                result.rolledBack = true;
+                await runRollback();
+                return reply.status(409).send(result);
             }
         }
 
@@ -215,9 +249,14 @@ server.post<{ Body: OnboardFullRequest }>('/api/apim/onboard-full', async (req, 
                 swagger: swaggerToUse,
             });
             step.success = true;
+            compensations.push(() => apim.deleteApi(ctx, body.apiId));
         } catch (err) {
             step.error = (err as Error).message;
+            result.steps.api = step;
             result.success = false;
+            result.rolledBack = true;
+            await runRollback();
+            return reply.status(409).send(result);
         }
         result.steps.api = step;
     }
@@ -234,14 +273,19 @@ server.post<{ Body: OnboardFullRequest }>('/api/apim/onboard-full', async (req, 
             req.log.info(`[3b] Setting API policy on: ${body.apiId}`);
             step.data = await apim.setApiPolicy(ctx, { apiId: body.apiId, policyXml: fixed.fixed });
             step.success = true;
+            // No separate rollback — deleting the API (step 3a) removes its policy
         } catch (err) {
             step.error = (err as Error).message;
+            result.steps.apiPolicy = step;
             result.success = false;
+            result.rolledBack = true;
+            await runRollback();
+            return reply.status(409).send(result);
         }
         result.steps.apiPolicy = step;
     }
 
-    // ── Step 4: Product ──────────────────────────────────────────────────────────
+    // ── Step 4: Product + Policy + Association ───────────────────────────────────
     if (body.product) {
         const prod = body.product;
 
@@ -258,9 +302,14 @@ server.post<{ Body: OnboardFullRequest }>('/api/apim/onboard-full', async (req, 
                     state: prod.state ?? 'published',
                 });
                 step.success = true;
+                compensations.push(() => apim.rollbackProduct(ctx, prod.productId));
             } catch (err) {
                 step.error = (err as Error).message;
+                result.steps.product = step;
                 result.success = false;
+                result.rolledBack = true;
+                await runRollback();
+                return reply.status(409).send(result);
             }
             result.steps.product = step;
         }
@@ -279,7 +328,11 @@ server.post<{ Body: OnboardFullRequest }>('/api/apim/onboard-full', async (req, 
                 step.success = true;
             } catch (err) {
                 step.error = (err as Error).message;
+                result.steps.productPolicy = step;
                 result.success = false;
+                result.rolledBack = true;
+                await runRollback();
+                return reply.status(409).send(result);
             }
             result.steps.productPolicy = step;
         }
@@ -294,9 +347,14 @@ server.post<{ Body: OnboardFullRequest }>('/api/apim/onboard-full', async (req, 
                     apiId: body.apiId,
                 });
                 step.success = true;
+                compensations.push(() => apim.rollbackApiProductAssociation(ctx, prod.productId, body.apiId));
             } catch (err) {
                 step.error = (err as Error).message;
+                result.steps.association = step;
                 result.success = false;
+                result.rolledBack = true;
+                await runRollback();
+                return reply.status(409).send(result);
             }
             result.steps.association = step;
         }
@@ -314,15 +372,19 @@ server.post<{ Body: OnboardFullRequest }>('/api/apim/onboard-full', async (req, 
                 apiId: body.apiId,
             });
             step.success = true;
+            compensations.push(() => apim.rollbackSubscription(ctx, sub.subscriptionId));
         } catch (err) {
             step.error = (err as Error).message;
+            result.steps.subscription = step;
             result.success = false;
+            result.rolledBack = true;
+            await runRollback();
+            return reply.status(409).send(result);
         }
         result.steps.subscription = step;
     }
 
-    const status = result.success ? 200 : 207; // 207 = multi-status (partial success)
-    return reply.status(status).send(result);
+    return reply.status(200).send(result);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

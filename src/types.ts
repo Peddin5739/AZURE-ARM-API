@@ -157,6 +157,8 @@ export interface StepResult<T = unknown> {
 
 export interface OnboardFullResult {
     success: boolean;
+    /** True when a step failed and all completed steps were rolled back */
+    rolledBack?: boolean;
     apiId: string;
     steps: {
         namedValues: StepResult[];
